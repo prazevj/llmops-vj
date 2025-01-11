@@ -1,2 +1,3 @@
 # LLMOps
-A repository of knowledge sharing on my LLMOps journey. I will update the fundamentals, best practices, tools and technologies in the area of Generative AI
+Large Language Model Operations (LLMOps), is a relatively new field that focuses on the development, deployment, and management of large language models (LLMs). It's essentially the application of DevOps principles to the world of LLMs, aiming to streamline the entire lifecycle of these powerful AI system
+
