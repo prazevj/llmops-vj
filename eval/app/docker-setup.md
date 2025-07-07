@@ -1,4 +1,4 @@
-Key Components:
+``` Key Components:
 1. Dockerfile
 
 Multi-stage build for optimized image size
@@ -123,3 +123,4 @@ Application settings
 Redis configuration
 
 This setup provides a robust, scalable, and secure containerized environment for your FastAPI application!RetryClaude does not have the ability to run the code it generates yet.Claude can make mistakes. Please double-check responses.
+```
