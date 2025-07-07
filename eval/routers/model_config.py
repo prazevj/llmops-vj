@@ -65,4 +65,70 @@ async def get_model_config():
         logger.error(f"JSON decode error: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid JSON in connection config")
     except Exception as e:
-        logger.
+        logger.error(f"Error retrieving model config: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving model config: {str(e)}")
+
+@router.post("/apa-golden-instructions", response_model=CuratedInstructions)
+async def derive_curated_instructions(instructions_input: GoldenInstructionsInput):
+    """
+    Derive curated instructions by combining prompt template and golden instructions.
+    This endpoint constructs the final prompt using:
+    1. Default prompt template from prompt-template endpoint
+    2. Golden instructions provided by user
+    3. Model configuration from model-config endpoint
+    """
+    try:
+        # Get the prompt template - Note: This would need an evaluation_id in practice
+        # For now, we'll use a default template or handle this differently
+        # template_response = await get_prompt_template(evaluation_id)
+        # prompt_template = template_response["prompt_template"]
+        
+        # Placeholder template - in practice this should come from an evaluation
+        prompt_template = """
+        Instructions: {golden_instructions}
+        
+        Context: {context}
+        
+        User Query: {user_query}
+        
+        Please provide your response based on the above instructions and context.
+        """
+        
+        # Get the model configuration
+        model_conn_config = await get_model_config()
+        
+        # Prepare variables for template substitution
+        variables_used = {
+            "golden_instructions": instructions_input.golden_instructions,
+            "context": instructions_input.context or "No specific context provided",
+            "user_query": instructions_input.user_query or "Awaiting user query"
+        }
+        
+        # Construct the final prompt by replacing placeholders
+        final_prompt = prompt_template.format(**variables_used)
+        
+        # Create metadata about the prompt construction
+        metadata = {
+            "prompt_length": len(final_prompt),
+            "template_variables": list(variables_used.keys()),
+            "construction_timestamp": datetime.utcnow().isoformat(),
+            "model_provider": model_conn_config.model_provider,
+            "model_name": model_conn_config.model_name
+        }
+        
+        # Return the curated instructions
+        return CuratedInstructions(
+            final_prompt=final_prompt,
+            model_conn_config=model_conn_config,
+            template_used=prompt_template,
+            golden_instructions=instructions_input.golden_instructions,
+            variables_used=variables_used,
+            metadata=metadata
+        )
+        
+    except Exception as e:
+        logger.error(f"Error deriving curated instructions: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error deriving curated instructions: {str(e)}"
+        )
