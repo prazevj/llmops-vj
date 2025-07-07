@@ -1,0 +1,503 @@
+# Dockerfile
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        pkg-config \
+        default-libmysqlclient-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY ./app /app/app
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # FastAPI Application
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=apa_user
+      - DB_PASSWORD=apa_password
+      - DB_NAME=apa_evaluation
+      - DB_PORT=3306
+      - ENVIRONMENT=development
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app  # For development hot reload
+    networks:
+      - apa_network
+    restart: unless-stopped
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=apa_evaluation
+      - MYSQL_USER=apa_user
+      - MYSQL_PASSWORD=apa_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - apa_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    restart: unless-stopped
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - apa_network
+    restart: unless-stopped
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - api
+    networks:
+      - apa_network
+    restart: unless-stopped
+
+networks:
+  apa_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+
+# requirements.txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pymysql==1.1.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+redis==5.0.1
+cryptography==41.0.7
+
+# .env (example environment file)
+# Database Configuration
+DB_HOST=localhost
+DB_USER=apa_user
+DB_PASSWORD=apa_password
+DB_NAME=apa_evaluation
+DB_PORT=3306
+
+# Application Configuration
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+SECRET_KEY=your-secret-key-here
+
+# Redis Configuration (optional)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+
+# .dockerignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# database/init.sql
+-- Database initialization script
+CREATE DATABASE IF NOT EXISTS apa_evaluation;
+USE apa_evaluation;
+
+-- Create connections table
+CREATE TABLE IF NOT EXISTS connections (
+    connection_id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    connection_type VARCHAR(50) NOT NULL,
+    connection_config JSON NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Create metrics table
+CREATE TABLE IF NOT EXISTS metrics (
+    metrics_id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    evaluation_id VARCHAR(36),
+    metrics_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    metric_type VARCHAR(100) NOT NULL,
+    configuration JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_evaluation_id (evaluation_id),
+    INDEX idx_metrics_name (metrics_name)
+);
+
+-- Create evaluations table
+CREATE TABLE IF NOT EXISTS evaluations (
+    evaluation_id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    evaluation_name VARCHAR(255) NOT NULL,
+    metrics_id VARCHAR(36) NOT NULL,
+    metrics_name VARCHAR(255) NOT NULL,
+    prompt_id VARCHAR(36) NOT NULL,
+    prompt_name VARCHAR(255) NOT NULL,
+    prompt_template TEXT NOT NULL,
+    user_instructions TEXT,
+    golden_instructions TEXT,
+    metadata_required JSON,
+    model_id VARCHAR(36) NOT NULL,
+    evaluation_scheduler VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_evaluation_name (evaluation_name),
+    INDEX idx_metrics_id (metrics_id),
+    INDEX idx_prompt_id (prompt_id),
+    INDEX idx_model_id (model_id),
+    FOREIGN KEY (metrics_id) REFERENCES metrics(metrics_id) ON DELETE RESTRICT
+);
+
+-- Insert sample data
+INSERT INTO connections (connection_type, connection_config) VALUES
+('LLM', JSON_OBJECT(
+    'model_name', 'gpt-3.5-turbo',
+    'model_provider', 'openai',
+    'api_key', 'your-api-key-here',
+    'base_url', 'https://api.openai.com/v1',
+    'temperature', 0.7,
+    'max_tokens', 1000,
+    'top_p', 1.0,
+    'frequency_penalty', 0.0,
+    'presence_penalty', 0.0
+));
+
+INSERT INTO metrics (metrics_name, description, metric_type, configuration) VALUES
+('Accuracy', 'Measures the accuracy of responses', 'classification', JSON_OBJECT('threshold', 0.8)),
+('Relevance', 'Measures relevance to user query', 'scoring', JSON_OBJECT('scale', '1-10'));
+
+# nginx/nginx.conf
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream api {
+        server api:8000;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            proxy_pass http://api;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /health {
+            proxy_pass http://api/health;
+            access_log off;
+        }
+    }
+}
+
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=apa_user
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=apa_evaluation
+      - DB_PORT=3306
+      - ENVIRONMENT=production
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - apa_network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=apa_evaluation
+      - MYSQL_USER=apa_user
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - apa_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - api
+    networks:
+      - apa_network
+    restart: unless-stopped
+
+networks:
+  apa_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+
+# Makefile
+.PHONY: build up down logs shell test clean
+
+# Development commands
+build:
+	docker-compose build
+
+up:
+	docker-compose up -d
+
+down:
+	docker-compose down
+
+logs:
+	docker-compose logs -f
+
+shell:
+	docker-compose exec api bash
+
+test:
+	docker-compose exec api python -m pytest
+
+clean:
+	docker-compose down -v
+	docker system prune -f
+
+# Production commands
+prod-build:
+	docker-compose -f docker-compose.prod.yml build
+
+prod-up:
+	docker-compose -f docker-compose.prod.yml up -d
+
+prod-down:
+	docker-compose -f docker-compose.prod.yml down
+
+prod-logs:
+	docker-compose -f docker-compose.prod.yml logs -f
+
+# Database commands
+db-shell:
+	docker-compose exec mysql mysql -u apa_user -p apa_evaluation
+
+db-backup:
+	docker-compose exec mysql mysqldump -u apa_user -p apa_evaluation > backup.sql
+
+# scripts/start.sh
+#!/bin/bash
+
+# Wait for database to be ready
+echo "Waiting for database to be ready..."
+while ! nc -z mysql 3306; do
+  sleep 1
+done
+
+echo "Database is ready!"
+
+# Run database migrations if needed
+# python -m alembic upgrade head
+
+# Start the application
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
